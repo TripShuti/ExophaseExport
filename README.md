@@ -1,36 +1,40 @@
-## ExophaseExport
+# ExophaseExport TUI
 
-This script makes it easy to grab all your data from exophase.com 
+A terminal UI application to grab, view, and export all your game data and statistics from exophase.com.
 
-Just log in through the browser it opens, it’ll find your player ID on its own, then download everything and save it as JSON and Excel files for you.
+## 🔍 How to get your Player ID
+To sync your data, you need your `playerProfileId` from Exophase:
+1. Go to your Exophase profile in your browser.
+2. Press `F12` to open Developer Tools.
+3. Search in the source code for `window.playerProfileId =`
+4. Copy the number and paste it into the app.
 
-## Requirements
+<img width="286" alt="image" src="https://github.com/user-attachments/assets/be3cc10a-bfaa-42a8-b4a8-b2d0184357cc" />
 
-    Python 3.8 or higher
+## 🚀 Installation
 
-    Playwright (for browser automation)
+Recommended use a virtual environment.
 
-    pandas (for Excel export)
-    
-    openpyxl (Excel file engine)
-## Installation
+### 1. Create and activate venv
+**Linux / macOS:**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
 
-1.Download the script.
+**Windows:**
+```cmd
+python -m venv venv
+venv\Scripts\activate
+```
 
-2.(Recommended) Сreate a virtual environment:
+### 2. Install dependencies
+```bash
+pip install textual requests pandas openpyxl
+```
 
-## Linux
-    python3 -m venv venv
-    source venv/bin/activate 
-## Windows PowerShell
-    py -3 -m venv venv
-    \venv\Scripts\Activate.ps1
-3.Install dependencies:
-
-    pip install playwright pandas openpyxl
-
-4.Install browser binaries for Playwright:
-
-    playwright install
-After run .py and folow instruction 
-## NOTE: Keep browser window open until the script finishes. 
+## 🎮 Usage
+Run the application:
+```bash
+python ExophaseExport.py
+```
