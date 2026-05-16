@@ -38,8 +38,8 @@ class SyncModal(ModalScreen[str]):
             yield Label("Синхронізація з Exophase")
             yield Input(placeholder="Player ID", id="pid")
             with Horizontal():
-                yield Button("Скасувати", variant="error", id="cancel")
-                yield Button("Синхронізувати", variant="success", id="start")
+                yield Button("Скасувати(Cancel)", variant="error", id="cancel")
+                yield Button("Синхронізувати(Sync)", variant="success", id="start")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "start":
@@ -57,10 +57,10 @@ class LocalExophase(App):
     DataTable { width: 1fr; height: 1fr; }
     """
     BINDINGS = [
-        ("q", "quit", "Вихід"),
-        ("s", "sync", "Синхронізувати"),
-        ("d", "delete_game", "Видалити"),
-        ("e", "export", "Експорт в Excel")
+        ("q", "quit", "Вихід(Quit)"),
+        ("s", "sync", "Синхронізувати(Sync)"),
+        ("d", "delete_game", "Видалити(Delete)"),
+        ("e", "export", "Експорт(Export) в Excel")
     ]
 
     def __init__(self):
