@@ -9,8 +9,8 @@ To sync your data, you need your `playerProfileId` from Exophase:
 2. Press `F12` to open Developer Tools.
 3. Search in the source code for `window.playerProfileId =`
 4. Copy the number and paste it into the app.
+<img width="817" height="280" alt="image" src="https://github.com/user-attachments/assets/818e2ed2-b6fb-40ba-b660-3e2581f2ca29" />
 
-<img width="286" alt="image" src="https://github.com/user-attachments/assets/be3cc10a-bfaa-42a8-b4a8-b2d0184357cc" />
 
 ## 🚀 Installation
 
