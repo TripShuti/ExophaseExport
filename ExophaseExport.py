@@ -1,113 +1,349 @@
-import asyncio
 import json
-import os
-import re
-from datetime import datetime
+import requests
+from pathlib import Path
+from datetime import datetime, timezone
 import pandas as pd
-from playwright.async_api import async_playwright
 from openpyxl.utils import get_column_letter
+from textual import work
+from textual.app import App, ComposeResult
+from textual.screen import ModalScreen
+from textual.containers import Vertical, Horizontal
+from textual.widgets import Header, Footer, DataTable, TabbedContent, TabPane, Input, Button, Label
 
 OUTPUT_DIR = "exophase_json"
 
-def auto_adjust_column_widths(writer, sheet_name):
-    worksheet = writer.sheets[sheet_name]
-    for col_idx, col in enumerate(worksheet.columns, 1):
-        max_length = 0
-        column_letter = get_column_letter(col_idx)
-        for cell in col:
-            if cell.value:
-                max_length = max(max_length, len(str(cell.value)))
-        adjusted_width = max_length + 2
-        worksheet.column_dimensions[column_letter].width = adjusted_width
+class SyncModal(ModalScreen[str]):
+    CSS = """
+    SyncModal {
+        align: center middle;
+        background: $background 80%;
+    }
+    #dialog {
+        width: 60;
+        height: auto;
+        padding: 2;
+        background: $surface;
+        border: solid $accent;
+    }
+    Horizontal {
+        margin-top: 1;
+        height: auto;
+        align: right middle;
+    }
+    Button { margin-left: 1; }
+    """
 
-async def main():
-    os.makedirs(OUTPUT_DIR, exist_ok=True)
-    player_id = None
-    all_games = []
+    def compose(self) -> ComposeResult:
+        with Vertical(id="dialog"):
+            yield Label("Синхронізація з Exophase")
+            yield Input(placeholder="Player ID", id="pid")
+            with Horizontal():
+                yield Button("Скасувати", variant="error", id="cancel")
+                yield Button("Синхронізувати", variant="success", id="start")
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
-        context = await browser.new_context()
-        page = await context.new_page()
-
-        player_ids = set()
-
-        def response_handler(response):
-            url = response.url
-            if "/invalidations" in url and "/public/player/" in url:
-                m = re.search(r'/public/player/(\d+)/invalidations', url)
-                if m:
-                    pid = m.group(1)
-                    player_ids.add(pid)
-                    print(f"Found player ID: {pid}")
-
-        page.on("response", response_handler)
-
-        print("Opening Exophase login page...")
-        await page.goto("https://www.exophase.com/login")
-
-        print("Please log in in the browser and go to your profile page, e.g. exophase.com/user/*username*/ . After, press Enter here...")
-        input()
-
-        await asyncio.sleep(5)
-
-        if player_ids:
-            player_id = player_ids.pop()
-            print(f"Automatically found player ID: {player_id}")
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "start":
+            pid = self.query_one("#pid", Input).value.strip()
+            if pid:
+                self.dismiss(pid)
+            else:
+                self.app.notify("Введіть Player ID!", severity="warning")
         else:
-            player_id = input("Could not find player ID automatically. Please enter player ID manually: ").strip()
+            self.dismiss(None)
 
-        if not player_id or not player_id.isdigit():
-            print("Invalid player ID. Exiting.")
-            await browser.close()
+
+class LocalExophase(App):
+    CSS = """
+    DataTable { width: 1fr; height: 1fr; }
+    """
+    BINDINGS = [
+        ("q", "quit", "Вихід"),
+        ("s", "sync", "Синхронізувати"),
+        ("d", "delete_game", "Видалити"),
+        ("e", "export", "Експорт в Excel")
+    ]
+
+    def __init__(self):
+        super().__init__()
+        self.sort_state = {}
+        self.games_data = []
+        self.latest_json_path = None
+
+    def compose(self) -> ComposeResult:
+        yield Header(show_clock=True)
+        with TabbedContent():
+            with TabPane("PlayStation", id="tp-ps"):
+                yield DataTable(id="dt-ps")
+            with TabPane("Xbox", id="tp-xbox"):
+                yield DataTable(id="dt-xbox")
+            with TabPane("Steam", id="tp-steam"):
+                yield DataTable(id="dt-steam")
+            with TabPane("Other", id="tp-other"):
+                yield DataTable(id="dt-other")
+        yield Footer()
+
+    def on_mount(self) -> None:
+        tables = {
+            "dt-ps": ("Game", "Playtime", "Bronze", "Silver", "Gold", "Platinum", "Completion %", "Last Played (UTC)"),
+            "dt-xbox": ("Game", "Playtime", "Earned Awards", "Total Awards", "Earned Points", "Completion %", "Last Played (UTC)"),
+            "dt-steam": ("Game", "Playtime", "Earned Awards", "Total Awards", "Completion %", "Last Played (UTC)"),
+            "dt-other": ("Game", "Playtime", "Platforms", "Completion %", "Last Played (UTC)")
+        }
+
+        for dt_id, cols in tables.items():
+            dt = self.query_one(f"#{dt_id}", DataTable)
+            dt.cursor_type = "row"
+            dt.zebra_stripes = True
+            dt.add_columns(*cols)
+            
+        self.call_after_refresh(self.load_data)
+
+    def load_data(self):
+        for dt_id in ["dt-ps", "dt-xbox", "dt-steam", "dt-other"]:
+            self.query_one(f"#{dt_id}", DataTable).clear()
+
+        base_dir = Path(__file__).resolve().parent
+        files = list(base_dir.rglob("all_games_*.json"))
+        
+        if not files:
+            self.games_data = []
             return
 
-        print("Starting to download games...")
+        self.latest_json_path = max(files, key=lambda p: p.stat().st_mtime)
+        
+        try:
+            with open(self.latest_json_path, 'r', encoding='utf-8') as f:
+                self.games_data = json.load(f)
+        except Exception as e:
+            self.notify(f"Помилка: {e}", severity="error")
+            return
 
+        dt_ps = self.query_one("#dt-ps", DataTable)
+        dt_xbox = self.query_one("#dt-xbox", DataTable)
+        dt_steam = self.query_one("#dt-steam", DataTable)
+        dt_other = self.query_one("#dt-other", DataTable)
+
+        loaded_count = 0
+
+        for game in self.games_data:
+            if not isinstance(game, dict):
+                continue
+
+            meta = game.get("meta") or {}
+            title = meta.get("title", "Unknown")
+            
+            p_units = game.get("playtimeUnits") or {}
+            playtime_h = p_units.get("hours", 0)
+            playtime_m = p_units.get("minutes", 0)
+            playtime = f"{playtime_h}h {playtime_m}m" if (playtime_h or playtime_m) else str(game.get("playtime", "0h"))
+            
+            percent = game.get("percent", 0.0)
+
+            ts = game.get("lastplayed_utc", 0)
+            if ts and ts > 0:
+                lastplayed = datetime.fromtimestamp(ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            else:
+                lastplayed = ""
+
+            platforms_data = meta.get("platforms") or []
+            platforms_lower = [str(p.get("name", "")).lower() for p in platforms_data if isinstance(p, dict)]
+            platforms_display = ", ".join([str(p.get("name", "")) for p in platforms_data if isinstance(p, dict)])
+            
+            if any(kw in p for p in platforms_lower for kw in ["playstation", "ps4", "ps5", "ps3", "ps vita"]):
+                row = (
+                    title, playtime,
+                    game.get("earned_bronze", 0) or 0,
+                    game.get("earned_silver", 0) or 0,
+                    game.get("earned_gold", 0) or 0,
+                    game.get("earned_platinum", 0) or 0,
+                    percent, lastplayed
+                )
+                dt_ps.add_row(*row)
+            elif any("xbox" in p for p in platforms_lower):
+                row = (
+                    title, playtime,
+                    game.get("earned_awards", 0) or 0,
+                    game.get("total_awards", 0) or 0,
+                    game.get("earned_points", 0) or 0,
+                    percent, lastplayed
+                )
+                dt_xbox.add_row(*row)
+            elif any("steam" in p for p in platforms_lower):
+                row = (
+                    title, playtime,
+                    game.get("earned_awards", 0) or 0,
+                    game.get("total_awards", 0) or 0,
+                    percent, lastplayed
+                )
+                dt_steam.add_row(*row)
+            else:
+                row = (
+                    title, playtime, platforms_display,
+                    percent, lastplayed
+                )
+                dt_other.add_row(*row)
+                
+            loaded_count += 1
+
+        self.notify(f"Завантажено {loaded_count} ігор", severity="information")
+
+    def sort_cell_value(self, value):
+        if isinstance(value, (int, float)):
+            return value
+        if isinstance(value, str):
+            if value == "":
+                return 0
+            if "h " in value and "m" in value:
+                try:
+                    h, m = value.split("h ")
+                    m = m.replace("m", "")
+                    return int(h) * 60 + int(m)
+                except ValueError:
+                    return 0
+            try:
+                return float(value)
+            except ValueError:
+                return value.lower()
+        return value
+
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected):
+        dt = event.data_table
+        col_key = event.column_key
+        state_key = f"{dt.id}_{col_key}"
+        
+        reverse = self.sort_state.get(state_key, False)
+        dt.sort(col_key, key=self.sort_cell_value, reverse=reverse)
+        self.sort_state[state_key] = not reverse
+
+    def save_current_data(self):
+        base_dir = Path(__file__).resolve().parent
+        out_dir = base_dir / OUTPUT_DIR
+        out_dir.mkdir(exist_ok=True)
+        
+        if not self.latest_json_path:
+            self.latest_json_path = out_dir / "all_games_manual.json"
+            
+        try:
+            with open(self.latest_json_path, "w", encoding="utf-8") as f:
+                json.dump(self.games_data, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            self.notify(f"Помилка збереження: {e}", severity="error")
+
+    def action_delete_game(self):
+        tabs = self.query_one(TabbedContent)
+        active_tab_id = tabs.active
+        
+        if not active_tab_id:
+            return
+
+        dt_map = {
+            "tp-ps": "#dt-ps",
+            "tp-xbox": "#dt-xbox",
+            "tp-steam": "#dt-steam",
+            "tp-other": "#dt-other"
+        }
+        
+        dt = self.query_one(dt_map.get(active_tab_id, "#dt-other"), DataTable)
+        
+        try:
+            row_key = dt.coordinate_to_cell_key(dt.cursor_coordinate).row_key
+            row_values = dt.get_row(row_key)
+            target_title = str(row_values[0])
+            
+            for i, game in enumerate(self.games_data):
+                meta = game.get("meta") or {}
+                if meta.get("title", "") == target_title:
+                    del self.games_data[i]
+                    break
+                    
+            self.save_current_data()
+            self.load_data()
+            self.notify(f"Видалено: {target_title}", severity="information")
+        except Exception:
+            self.notify("Немає виділеного рядка для видалення", severity="warning")
+
+    def action_sync(self):
+        def check_sync(player_id: str | None):
+            if player_id:
+                self.notify("Синхронізація...")
+                self.fetch_api_data(player_id)
+
+        self.push_screen(SyncModal(), check_sync)
+
+    def action_export(self):
+        self.notify("Формування Excel файлу...")
+        self.export_excel_data()
+
+    @work(thread=True)
+    def fetch_api_data(self, player_id: str):
+        base_dir = Path(__file__).resolve().parent
+        out_dir = base_dir / OUTPUT_DIR
+        out_dir.mkdir(exist_ok=True)
+
+        headers = {
+            "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "en-US,en;q=0.9",
+            "Referer": f"https://www.exophase.com/"
+        }
+
+        all_games = []
         page_num = 1
+
         while True:
             url = f"https://api.exophase.com/public/player/{player_id}/games?page={page_num}&environment=&sort=1&showHidden=0"
-            print(f"Loading page {page_num}...")
             try:
-                await page.goto(url)
-                pre_handle = await page.query_selector("pre")
-                if not pre_handle:
-                    print(f"No JSON found in <pre> tag on page {page_num}.")
-                    break
-                json_text = await pre_handle.inner_text()
-                data = json.loads(json_text)
+                resp = requests.get(url, headers=headers, timeout=10)
+                resp.raise_for_status()
+                data = resp.json()
             except Exception as e:
-                print(f"JSON parsing error on page {page_num}: {e}")
+                self.call_from_thread(self.notify, f"Помилка API: {e}", severity="error")
                 break
 
             if not data.get("success", False):
-                print("success=False, stopping.")
                 break
 
             games = data.get("games", [])
             if not games:
-                print("No games found, stopping.")
                 break
 
             all_games.extend(games)
             page_num += 1
 
-        if not all_games:
-            print("No games found.")
-            await browser.close()
+        if all_games:
+            json_filepath = out_dir / f"all_games_{player_id}.json"
+            try:
+                with open(json_filepath, "w", encoding="utf-8") as f:
+                    json.dump(all_games, f, ensure_ascii=False, indent=4)
+                self.call_from_thread(self.notify, f"Успіх: {len(all_games)} ігор", severity="information")
+                self.call_from_thread(self.load_data)
+            except Exception as e:
+                self.call_from_thread(self.notify, f"Помилка збереження: {e}", severity="error")
+
+    @work(thread=True)
+    def export_excel_data(self):
+        base_dir = Path(__file__).resolve().parent
+        out_dir = base_dir / OUTPUT_DIR
+        
+        files = list(out_dir.rglob("all_games_*.json"))
+        if not files:
+            self.call_from_thread(self.notify, "Немає JSON файлів для експорту", severity="error")
             return
 
-        json_filepath = os.path.join(OUTPUT_DIR, f"all_games_{player_id}.json")
-        with open(json_filepath, "w", encoding="utf-8") as f:
-            json.dump(all_games, f, ensure_ascii=False, indent=4)
-        print(f"Saved {len(all_games)} games to {json_filepath}")
+        latest_file = max(files, key=lambda p: p.stat().st_mtime)
+        player_id = latest_file.stem.split("_")[-1]
 
-        # Keywords for platform detection
+        try:
+            with open(latest_file, 'r', encoding='utf-8') as f:
+                all_games = json.load(f)
+        except Exception as e:
+            self.call_from_thread(self.notify, f"Помилка читання JSON: {e}", severity="error")
+            return
+
         ps_keywords = ["playstation", "ps4", "ps5", "ps3", "ps vita"]
         xbox_keywords = ["xbox"]
         steam_keywords = ["steam"]
 
-        # Prepare sheets data
         sheets_data = {
             "PlayStation": [],
             "Xbox": [],
@@ -125,19 +361,16 @@ async def main():
             platform_names = [p.get("name", "") for p in platform_objs]
             platform_names_lower = [p.lower() for p in platform_names]
 
-            # Last played as readable date
             lastplayed_ts = game.get("lastplayed_utc", 0)
             lastplayed_str = ""
             if lastplayed_ts and lastplayed_ts > 0:
                 try:
-                    from datetime import timezone
                     lastplayed_str = datetime.fromtimestamp(lastplayed_ts, timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
                 except Exception:
                     lastplayed_str = ""
 
             completion_percent = game.get("percent", 0.0)
 
-            # Determine sheet based on platform keywords
             if any(any(keyword in p for keyword in ps_keywords) for p in platform_names_lower):
                 sheet_name = "PlayStation"
                 row = {
@@ -183,20 +416,27 @@ async def main():
 
             sheets_data[sheet_name].append(row)
 
-        excel_filepath = os.path.join(OUTPUT_DIR, f"exophase_games_{player_id}.xlsx")
+        excel_filepath = out_dir / f"exophase_games_{player_id}.xlsx"
 
-        with pd.ExcelWriter(excel_filepath, engine="openpyxl") as writer:
-            for sheet_name, rows in sheets_data.items():
-                if rows:
-                    df = pd.DataFrame(rows)
-                    df.to_excel(writer, sheet_name=sheet_name, index=False)
-                    auto_adjust_column_widths(writer, sheet_name)
+        try:
+            with pd.ExcelWriter(excel_filepath, engine="openpyxl") as writer:
+                for sheet_name, rows in sheets_data.items():
+                    if rows:
+                        df = pd.DataFrame(rows)
+                        df.to_excel(writer, sheet_name=sheet_name, index=False)
+                        worksheet = writer.sheets[sheet_name]
+                        for col_idx, col in enumerate(worksheet.columns, 1):
+                            max_length = 0
+                            column_letter = get_column_letter(col_idx)
+                            for cell in col:
+                                if cell.value:
+                                    max_length = max(max_length, len(str(cell.value)))
+                            worksheet.column_dimensions[column_letter].width = max_length + 2
 
-        print(f"Data successfully saved to Excel: {excel_filepath}")
-
-        input("Press Enter to close the browser and exit...")
-        await browser.close()
+            self.call_from_thread(self.notify, f"Експортовано в {excel_filepath.name}", severity="information")
+        except Exception as e:
+            self.call_from_thread(self.notify, f"Помилка експорту: {e}", severity="error")
 
 if __name__ == "__main__":
-    asyncio.run(main())
-
+    app = LocalExophase()
+    app.run()
