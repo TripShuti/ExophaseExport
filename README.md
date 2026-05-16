@@ -1,4 +1,5 @@
 # ExophaseExport TUI
+<img width="1920" height="1080" alt="2026-05-16_05-23-48" src="https://github.com/user-attachments/assets/d0b22304-6c4b-4d07-9083-a261579ad615" />
 
 A terminal UI application to grab, view, and export all your game data and statistics from exophase.com.
 
