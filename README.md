@@ -11,6 +11,7 @@ To sync your data, you need your `playerProfileId` from Exophase:
 4. Copy the number and paste it into the app.
 <img width="817" height="280" alt="image" src="https://github.com/user-attachments/assets/818e2ed2-b6fb-40ba-b660-3e2581f2ca29" />
 
+<img width="676" height="296" alt="image" src="https://github.com/user-attachments/assets/80f39d7e-3e43-49bb-bc0e-438dbe1e40c2" />
 
 ## 🚀 Installation
 
