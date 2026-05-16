@@ -52,7 +52,7 @@ class SyncModal(ModalScreen[str]):
             self.dismiss(None)
 
 
-class LocalExophase(App):
+class ExophaseExport(App):
     CSS = """
     DataTable { width: 1fr; height: 1fr; }
     """
@@ -438,5 +438,5 @@ class LocalExophase(App):
             self.call_from_thread(self.notify, f"Помилка експорту: {e}", severity="error")
 
 if __name__ == "__main__":
-    app = LocalExophase()
+    app = ExophaseExport()
     app.run()
