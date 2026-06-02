@@ -189,22 +189,22 @@ class ExophaseExport(App):
 
     def sort_cell_value(self, value):
         if isinstance(value, (int, float)):
-            return value
+            return (0, value)
         if isinstance(value, str):
             if value == "":
-                return 0
+                return (0, 0)
             if "h " in value and "m" in value:
                 try:
                     h, m = value.split("h ")
                     m = m.replace("m", "")
-                    return int(h) * 60 + int(m)
+                    return (0, int(h) * 60 + int(m))
                 except ValueError:
-                    return 0
+                    return (0, 0)
             try:
-                return float(value)
+                return (0, float(value))
             except ValueError:
-                return value.lower()
-        return value
+                return (1, value.lower())
+        return (1, str(value))
 
     def on_data_table_header_selected(self, event: DataTable.HeaderSelected):
         dt = event.data_table
