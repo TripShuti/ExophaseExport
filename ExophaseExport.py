@@ -104,7 +104,7 @@ class SyncModal(ModalScreen[str | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="dialog"):
             yield Label("Синхронізація з Exophase")
-            yield Input(placeholder="Player ID (число або нік)", id="pid")
+            yield Input(placeholder="Player ID", id="pid")
             with Horizontal():
                 yield Button("Скасувати", variant="error",   id="cancel")
                 yield Button("Синхронізувати", variant="success", id="start")
